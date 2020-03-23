@@ -1,0 +1,15 @@
+{
+  "name": "fixups",
+  "version": "1.0.0",
+  "description": "",
+  "main": "fixups",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "aws-sdk": "^2.643.0",
+    "deep-equal": "^2.0.1"
+  }
+}

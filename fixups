@@ -1,0 +1,199 @@
+#!/usr/bin/env node
+
+var   deepEqual               = require('deep-equal');
+const ssg                     = require('./lib/ssg');
+const utils                   = require('./lib/utils');
+const { deref,addTo }         = utils;
+
+const smartAws                = require('./lib/smart-aws');
+const {
+  route53,ec2
+}                             = smartAws;
+
+const fixResourceRecordSets   = smartAws.fix.resourceRecordSets;
+const fixInstances            = smartAws.fix.instances;
+const fixInstanceLogging      = smartAws.fix.instanceLogging;
+const log                     = ssg.log;
+
+
+
+ssg.runAsyncMain(main);
+
+async function main() {
+  var   latest={};
+
+  const DNSName   = 'cdr0.net.';
+  const zones_P   = route53.listHostedZonesByName({DNSName}).promise();
+
+  const [
+    zones
+  ]               = [await zones_P];
+  //log(`zones`, {zones});
+
+  const hostedZone = zones.HostedZones.filter((z) => z.Name === DNSName)[0] || {};
+  latest = hostedZone;
+  log(`hostedZone`, hostedZone);
+
+  const zone = await route53.getHostedZone({Id: hostedZone.Id}).promise();
+  latest = zone;
+
+  const recordSets = await route53.listResourceRecordSets({HostedZoneId: hostedZone.Id}).promise();
+  const records    = fixResourceRecordSets(recordSets);
+  latest = records;
+
+  // ------------------------- ec2
+
+  const reservations  = await ec2.describeInstances({}).promise();
+  //const instanceData  = fixInstances(reservations, true);
+  const instanceData  = fixInstances(reservations);
+  const logInstData   = fixInstanceLogging(instanceData);
+  //latest              = logInstData;
+
+  const wrongStates   = Object.keys(instanceData.by.State).filter((st) => (st !== 'stopped' && st !== 'running'));
+  //latest = {wrongStates};
+
+  if (wrongStates.length !== 0) {
+    // Wait until the instances finish their state change
+    console.error(`Waiting for instances to complete: ${wrongStates}`);
+    return latest;
+  }
+
+  var runningFqdns = {};
+  var stoppedFqdns = {};
+
+  latest = {...latest};
+
+  instanceData.by.State.running.forEach((instance) => {
+    const fqdns = deref(instance, 'tags0.qn_fqdns') ||[];
+    fqdns.forEach((fqdn) => {
+      runningFqdns[fqdn] = addTo(runningFqdns[fqdn], instance.PublicIpAddress || instance.commonName);
+    });
+  });
+
+  instanceData.by.State.stopped.forEach((instance) => {
+    const fqdns = deref(instance, 'tags0.qn_fqdns') ||[];
+    fqdns.forEach((fqdn) => {
+      // Is it running?... then it cannot be stopped
+      if (runningFqdns[fqdn])     { return; }
+
+      stoppedFqdns[fqdn] = addTo(stoppedFqdns[fqdn], instance.PublicIpAddress || instance.PrivateIpAddress || instance.commonName);
+    });
+  });
+
+  // ----- Now we know which FQDNs need to be live, and which can be removed ----------------
+  var   Changes = [];
+
+  // FQDNs for running instances -- make sure there is a change, then use UPSERT
+  Object.keys(runningFqdns).forEach((fqdn) => {
+    const valueList = runningFqdns[fqdn];
+    const rrList    = valueList.map((Value) => ({Value}));
+    const Name      = `${fqdn}.`;
+    var   newRRSet  = {
+      Name,
+      TTL:              30,
+      Type:             'A',
+      ResourceRecords:  rrList
+    };
+
+    const currentRRSet = getCurrentRRSet(Name);
+    //log(`deepEqual???`, {currentRRSet, newRRSet});
+
+    if (!currentRRSet) {
+      // Doesnt exist in DNS, add it
+      Changes.push({
+        Action:             'CREATE',
+        ResourceRecordSet:  newRRSet
+      });
+    }
+
+    else if (!deepEqual(currentRRSet, newRRSet)) {
+      Changes.push({
+        Action:             'UPSERT',
+        ResourceRecordSet:  newRRSet
+      });
+    }
+  });
+
+  Object.keys(stoppedFqdns).forEach((fqdn) => {
+    const Name          = `${fqdn}.`;
+    const currentRRSet  = getCurrentRRSet(Name);
+    log(`stopped & current`, {Name, currentRRSet});
+
+    if (currentRRSet) {
+      Changes.push({
+        Action:             'DELETE',
+        ResourceRecordSet:  currentRRSet
+      });
+    }
+  });
+
+  var   ChangeBatch = {
+    Changes, Comment: 'fqnds for cdr0.net'
+  };
+
+  var   params = {
+    ChangeBatch: {
+      Changes,
+      Comment: 'fqdns for cdr0.net'
+    },
+    HostedZoneId: hostedZone.Id
+  };
+
+  var receipt;
+
+  receipt = await route53.changeResourceRecordSets(params).promise();
+
+  const changeInfo  = await route53.getChange({Id: receipt.ChangeInfo.Id}).promise();
+
+  log(`crrsparams`, {params, changeInfo});
+
+  var   waited;
+  waited      = await route53.waitFor('resourceRecordSetsChanged', {Id: receipt.ChangeInfo.Id}).promise();
+
+
+  latest = {...latest, records, runningFqdns, stoppedFqdns, params, receipt, changeInfo, waited};
+  return latest;
+//  return {zones};
+
+  function getCurrentRRSet(name) {
+    var rec = records[name] ||[];
+
+    return rec[0];
+  }
+}
+
+/**
+ *  stringifies `x` in a way that makes objects comparable by comparing the strings.
+ */
+function consistentString(x) {
+  // This is all we need right now
+  return JSON.stringify(x);
+}
+
+function omit(obj, ...keys) {
+  if (keys.length === 1 && Array.isArray(keys[0])) { return omit(arr, ...keys[0]); }
+
+  const newKeys = Object.keys(obj).filter((key) => keys.indexOf(key) !== -1);
+
+  return newKeys.reduce((m, key) => {
+    m = {...m, [key]: obj[key]};
+    return m;
+  }, {});
+}
+
+const dummyExampleChange = {
+  ChangeBatch: {
+    Changes: [{
+      Action: "CREATE",
+      ResourceRecordSet: {
+        Name: "example.com",
+        TTL: 60,
+        Type: "A",
+        ResourceRecords: [ { Value: "192.0.2.44" } ],
+      }
+    }],
+    Comment: "Web server for example.com"
+  },
+  HostedZoneId: "Z3M3LMPEXAMPLE"
+};
+
