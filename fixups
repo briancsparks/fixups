@@ -1,52 +1,59 @@
 #!/usr/bin/env node
 
+var   argv                    = require('minimist')(process.argv.slice(2));
 var   deepEqual               = require('deep-equal');
 const ssg                     = require('./lib/ssg');
 const utils                   = require('./lib/utils');
-const { deref,addTo }         = utils;
+const { deref,addTo,omit }    = utils;
 
 const smartAws                = require('./lib/smart-aws');
 const {
-  route53,ec2
+  route53,ec2,fix
 }                             = smartAws;
 
-const fixResourceRecordSets   = smartAws.fix.resourceRecordSets;
-const fixInstances            = smartAws.fix.instances;
-const fixInstanceLogging      = smartAws.fix.instanceLogging;
+//const fixResourceRecordSets   = smartAws.fix.resourceRecordSets;
+//const fixInstances            = smartAws.fix.instances;
+//const fixInstanceLogging      = smartAws.fix.instanceLogging;
 const log                     = ssg.log;
 
-
+//log(`argv`, {argv});
 
 ssg.runAsyncMain(main);
 
 async function main() {
   var   latest={};
 
+  // Start the query for instances now
+  const reservations_P  = ec2.describeInstances({}).promise();
+
+  // Get the zones
   const DNSName   = 'cdr0.net.';
   const zones_P   = route53.listHostedZonesByName({DNSName}).promise();
 
   const [
     zones
   ]               = [await zones_P];
-  //log(`zones`, {zones});
 
   const hostedZone = zones.HostedZones.filter((z) => z.Name === DNSName)[0] || {};
   latest = hostedZone;
   log(`hostedZone`, hostedZone);
 
-  const zone = await route53.getHostedZone({Id: hostedZone.Id}).promise();
-  latest = zone;
+  const zone_P        = route53.getHostedZone({Id: hostedZone.Id}).promise();
+  const recordSets_P  = route53.listResourceRecordSets({HostedZoneId: hostedZone.Id}).promise();
 
-  const recordSets = await route53.listResourceRecordSets({HostedZoneId: hostedZone.Id}).promise();
-  const records    = fixResourceRecordSets(recordSets);
+  const [zone, recordSets]  = [await zone_P, await recordSets_P];
+
+  const records       = fix.resourceRecordSets(recordSets);
+
+  latest = zone;
   latest = records;
 
   // ------------------------- ec2
 
-  const reservations  = await ec2.describeInstances({}).promise();
-  //const instanceData  = fixInstances(reservations, true);
-  const instanceData  = fixInstances(reservations);
-  const logInstData   = fixInstanceLogging(instanceData);
+  const reservations  = await reservations_P;
+  //const instanceData  = fix.instances(reservations, true);
+  const instanceData  = fix.instances(reservations);
+  const logInstData   = fix.instanceLogging(instanceData);
   //latest              = logInstData;
 
   const wrongStates   = Object.keys(instanceData.by.State).filter((st) => (st !== 'stopped' && st !== 'running'));
@@ -138,20 +145,31 @@ async function main() {
     },
     HostedZoneId: hostedZone.Id
   };
+  latest = {...latest, records, runningFqdns, stoppedFqdns, params};
 
-  var receipt;
+  var receipt, waited, changeInfo;
 
-  receipt = await route53.changeResourceRecordSets(params).promise();
+  if (argv['dry-run']) {
+    log(`Dry run: `, params);
+    return latest;
+  }
 
-  const changeInfo  = await route53.getChange({Id: receipt.ChangeInfo.Id}).promise();
+  // Do it!
+  receipt     = await route53.changeResourceRecordSets(params).promise();
+  changeInfo  = await route53.getChange({Id: receipt.ChangeInfo.Id}).promise();
+  latest      = {...latest, receipt, changeInfo};
 
-  log(`crrsparams`, {params, changeInfo});
+  if (argv.quick) {
+    log(`quick`, {receipt, changeInfo});
+    return latest;
+  }
 
-  var   waited;
+  await sleep(2500);
+
   waited      = await route53.waitFor('resourceRecordSetsChanged', {Id: receipt.ChangeInfo.Id}).promise();
 
 
-  latest = {...latest, records, runningFqdns, stoppedFqdns, params, receipt, changeInfo, waited};
+  latest = {...latest, waited};
   return latest;
 //  return {zones};
 
@@ -162,23 +180,8 @@ async function main() {
   }
 }
 
-/**
- *  stringifies `x` in a way that makes objects comparable by comparing the strings.
- */
-function consistentString(x) {
-  // This is all we need right now
-  return JSON.stringify(x);
-}
-
-function omit(obj, ...keys) {
-  if (keys.length === 1 && Array.isArray(keys[0])) { return omit(arr, ...keys[0]); }
-
-  const newKeys = Object.keys(obj).filter((key) => keys.indexOf(key) !== -1);
-
-  return newKeys.reduce((m, key) => {
-    m = {...m, [key]: obj[key]};
-    return m;
-  }, {});
+function sleep(milliseconds) {
+  return new Promise(resolve => setTimeout(resolve, milliseconds))
 }
 
 const dummyExampleChange = {

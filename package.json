@@ -10,6 +10,7 @@
   "license": "MIT",
   "dependencies": {
     "aws-sdk": "^2.643.0",
-    "deep-equal": "^2.0.1"
+    "deep-equal": "^2.0.1",
+    "minimist": "^1.2.5"
   }
 }
