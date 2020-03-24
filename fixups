@@ -23,20 +23,21 @@ ssg.runAsyncMain(main);
 async function main() {
   var   latest={};
 
-  // Start the query for instances now
+  // ---------- EC2 -- Instances --------------------------------------------------------------------------------------
+
+  // Start the query for instances now -- let it work, while we deal with Route53.
   const reservations_P  = ec2.describeInstances({}).promise();
+
+  // ---------- Route53 -- Get Records --------------------------------------------------------------------------------
 
   // Get the zones
   const DNSName   = 'cdr0.net.';
   const zones_P   = route53.listHostedZonesByName({DNSName}).promise();
 
-  const [
-    zones
-  ]               = [await zones_P];
+  const [zones]   = [await zones_P];
 
   const hostedZone = zones.HostedZones.filter((z) => z.Name === DNSName)[0] || {};
-  latest = hostedZone;
-  log(`hostedZone`, hostedZone);
+  //log(`hostedZone`, hostedZone);
 
   const zone_P        = route53.getHostedZone({Id: hostedZone.Id}).promise();
   const recordSets_P  = route53.listResourceRecordSets({HostedZoneId: hostedZone.Id}).promise();
