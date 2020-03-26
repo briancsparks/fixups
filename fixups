@@ -56,6 +56,7 @@ async function main() {
   const instanceData  = fix.instances(reservations);
   const logInstData   = fix.instanceLogging(instanceData);
   //latest              = logInstData;
+  log(`InstanceData`, {logInstData});
 
   const wrongStates   = Object.keys(instanceData.by.State).filter((st) => (st !== 'stopped' && st !== 'running'));
   //latest = {wrongStates};
@@ -72,14 +73,14 @@ async function main() {
   latest = {...latest};
 
   instanceData.by.State.running.forEach((instance) => {
-    const fqdns = deref(instance, 'tags0.qn_fqdns') ||[];
+    const fqdns = deref(instance, 'tags0.fqdns') ||[];
     fqdns.forEach((fqdn) => {
       runningFqdns[fqdn] = addTo(runningFqdns[fqdn], instance.PublicIpAddress || instance.commonName);
     });
   });
 
   instanceData.by.State.stopped.forEach((instance) => {
-    const fqdns = deref(instance, 'tags0.qn_fqdns') ||[];
+    const fqdns = deref(instance, 'tags0.fqdns') ||[];
     fqdns.forEach((fqdn) => {
       // Is it running?... then it cannot be stopped
       if (runningFqdns[fqdn])     { return; }
