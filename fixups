@@ -2,6 +2,7 @@
 
 var   argv                    = require('minimist')(process.argv.slice(2));
 var   deepEqual               = require('deep-equal');
+const instances               = require('./lib/cmds/instances');
 const ssg                     = require('./lib/ssg');
 const utils                   = require('./lib/utils');
 const { deref,addTo,omit }    = utils;
@@ -18,7 +19,27 @@ const log                     = ssg.log;
 
 //log(`argv`, {argv});
 
-ssg.runAsyncMain(main);
+const fnName = argv._[0];
+const fnArgs = argv._.slice(1);
+
+var handled = true;
+switch(fnName) {
+  case 'start':
+    ssg.runAsyncMain(instances.start, fnArgs);
+    break;
+
+  case 'stop':
+    ssg.runAsyncMain(instances.stop, fnArgs);
+    break;
+
+  default:
+    handled = false;
+}
+
+if (!handled) {
+  ssg.runAsyncMain(main);
+}
+
 
 async function main() {
   var   latest={};
