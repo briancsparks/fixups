@@ -11,26 +11,20 @@ const smartAws                = require('./lib/smart-aws');
 const {
   route53,ec2,fix
 }                             = smartAws;
-
-//const fixResourceRecordSets   = smartAws.fix.resourceRecordSets;
-//const fixInstances            = smartAws.fix.instances;
-//const fixInstanceLogging      = smartAws.fix.instanceLogging;
 const log                     = ssg.log;
 
-//log(`argv`, {argv});
-
+/**
+ *  Dispatch commands
+ */
 const fnName = argv._[0];
 const fnArgs = argv._.slice(1);
 
 var handled = true;
 switch(fnName) {
-  case 'start':
-    ssg.runAsyncMain(instances.start, fnArgs);
-    break;
-
-  case 'stop':
-    ssg.runAsyncMain(instances.stop, fnArgs);
-    break;
+  case 'start':         ssg.runAsyncMain(instances.start, fnArgs);          break;
+  case 'stop':          ssg.runAsyncMain(instances.stop, fnArgs);           break;
+  case 'reboot':        ssg.runAsyncMain(instances.reboot, fnArgs);         break;
+  case 'terminate':     ssg.runAsyncMain(instances.terminate, fnArgs);      break;
 
   default:
     handled = false;
@@ -41,6 +35,9 @@ if (!handled) {
 }
 
 
+/**
+ *  main
+ */
 async function main() {
   var   latest={};
 
@@ -75,9 +72,9 @@ async function main() {
   const reservations  = await reservations_P;
   //const instanceData  = fix.instances(reservations, true);
   const instanceData  = fix.instances(reservations);
-  const logInstData   = fix.instanceLogging(instanceData);
+  //const logInstData   = fix.instanceLogging(instanceData);
   //latest              = logInstData;
-  log(`InstanceData`, {logInstData});
+  //log(`InstanceData`, {logInstData});
 
   const wrongStates   = Object.keys(instanceData.by.State).filter((st) => (st !== 'stopped' && st !== 'running'));
   //latest = {wrongStates};
@@ -147,7 +144,7 @@ async function main() {
   Object.keys(stoppedFqdns).forEach((fqdn) => {
     const Name          = `${fqdn}.`;
     const currentRRSet  = getCurrentRRSet(Name);
-    log(`stopped & current`, {Name, currentRRSet});
+    //log(`stopped & current`, {Name, currentRRSet});
 
     if (currentRRSet) {
       Changes.push({
@@ -174,7 +171,7 @@ async function main() {
 
   if (argv['dry-run']) {
     log(`Dry run: `, params);
-    return latest;
+    return {params};
   }
 
   // Do it!
