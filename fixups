@@ -18,20 +18,21 @@ const log                     = ssg.log;
  */
 const fnName = argv._[0];
 const fnArgs = argv._.slice(1);
+log(`top`, {argv, fnName, fnArgs});
 
 var handled = true;
 switch(fnName) {
-  case 'start':         ssg.runAsyncMain(instances.start, fnArgs);          break;
-  case 'stop':          ssg.runAsyncMain(instances.stop, fnArgs);           break;
-  case 'reboot':        ssg.runAsyncMain(instances.reboot, fnArgs);         break;
-  case 'terminate':     ssg.runAsyncMain(instances.terminate, fnArgs);      break;
+  case 'start':         ssg.runAsyncMain(instances.start, fnArgs, argv);          break;
+  case 'stop':          ssg.runAsyncMain(instances.stop, fnArgs, argv);           break;
+  case 'reboot':        ssg.runAsyncMain(instances.reboot, fnArgs, argv);         break;
+  case 'terminate':     ssg.runAsyncMain(instances.terminate, fnArgs, argv);      break;
 
   default:
     handled = false;
 }
 
 if (!handled) {
-  ssg.runAsyncMain(main);
+  ssg.runAsyncMain(main, argv);
 }
 
 
